@@ -1,0 +1,13 @@
+project_id = "tecnopolis"
+
+[functions.crear-pago-webpay]
+verify_jwt = true
+
+# Transbank redirige al navegador del cliente directamente a esta URL
+# (return_url) sin ningun header de autorizacion, por lo que la
+# verificacion de JWT de Supabase debe quedar deshabilitada aqui.
+[functions.confirmar-pago-webpay]
+verify_jwt = false
+
+[functions.calcular-envio]
+verify_jwt = true
