@@ -26,10 +26,12 @@ Functions, Realtime, Storage).
    - `supabase/migrations/0002_storage.sql`
    - `supabase/migrations/0003_envio_y_cuentas.sql`
    - `supabase/migrations/0004_hardening_ddos.sql`
+   - `supabase/migrations/0005_admin_rol_mfa.sql`
    (o usa `supabase db push` con la CLI si tienes el proyecto linkeado).
-3. En **Authentication > Users**, crea manualmente el usuario admin con
-   email `ce2full@gmail.com` (el que las políticas RLS reconocen como
-   administrador).
+3. En **Authentication > Users**, crea manualmente el usuario admin y
+   asígnale el rol `admin` en `app_metadata` (ver
+   [Admin y MFA](#admin-y-mfa)). La migración `0005` ya se lo asigna al
+   admin original.
 
 ## 2. Variables de entorno del frontend
 
@@ -107,7 +109,7 @@ npm run dev
    `confirmar_orden_pagada`) o `rechazado`. Luego redirige (302) a
    `/webpay-retorno` en el frontend con el resultado en la query string.
 4. `/webpay-retorno` limpia el carrito local solo si `estado=pagado`.
-5. `/admin` (restringido a `ce2full@gmail.com`) permite editar stock y
+5. `/admin` (restringido a usuarios con rol `admin` y MFA verificado) permite editar stock y
    precio en vivo, agregar productos nuevos (con imagen por URL o subida
    a Storage, y peso/dimensiones para el cálculo de envío), y en la
    pestaña **Pedidos** avanzar el estado de cada orden
@@ -145,15 +147,79 @@ npm run dev
 
 ## Seguridad (RLS)
 
-- `productos`: lectura pública; escritura solo para el usuario autenticado
-  `ce2full@gmail.com`.
+- `productos`: lectura pública; escritura solo para el admin
+  (`public.es_admin()`: rol `admin` en `app_metadata` **y** sesión `aal2`).
 - `ordenes`: **sin inserción pública** (desde la migración `0004`); solo
   `crear-pago-webpay` crea órdenes, con la Service Role Key. Un
   cliente autenticado puede leer **solo sus propias** órdenes; el admin
-  (`ce2full@gmail.com`) puede leer y actualizar **todas**. No hay policy
+  (`public.es_admin()`) puede leer y actualizar **todas**. No hay policy
   de `UPDATE` para clientes — los cambios de estado por pago los hacen
   las Edge Functions con la Service Role Key (que siempre evita RLS), y
   los cambios de estado por envío los hace el admin desde `/admin`.
+
+- Storage (bucket `productos`): lectura pública; subir, reemplazar o
+  borrar imágenes solo con `public.es_admin()`.
+
+## Admin y MFA
+
+Desde la migración `0005_admin_rol_mfa.sql` el admin **no** se identifica
+por su email: necesita `"role": "admin"` en `app_metadata` **y** haber
+verificado un factor TOTP en la sesión actual (`aal2` en el JWT). Las
+policies RLS de `productos`, `ordenes` y Storage usan
+`public.es_admin()`, que comprueba ambas cosas. Se usa `app_metadata`
+porque solo se puede editar con la Service Role Key o SQL; `user_metadata`
+lo puede modificar el propio usuario y **nunca** debe usarse para roles.
+
+En el primer login a `/admin` (después de la contraseña y el captcha) el
+admin escanea un QR con su app de autenticación (Google Authenticator,
+1Password, Authy...) e ingresa el código de 6 dígitos. En los siguientes
+logins solo se pide el código.
+
+### Activar TOTP
+
+En **Supabase > Authentication > Multi-Factor** activa **TOTP (App
+Authenticator)**. Sin esto el enrolamiento falla y nadie puede llegar a
+`aal2`.
+
+### Dar o quitar el rol admin
+
+En **SQL Editor**:
+
+```sql
+-- Dar rol admin
+update auth.users
+   set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}'::jsonb
+ where email = 'nuevo-admin@ejemplo.cl';
+
+-- Quitar rol admin
+update auth.users
+   set raw_app_meta_data = raw_app_meta_data - 'role'
+ where email = 'ex-admin@ejemplo.cl';
+```
+
+El JWT solo refleja el cambio después de refrescarse: el usuario debe
+**cerrar sesión y volver a entrar**. Al quitar el rol, el token vigente
+sigue siendo válido hasta que expira (1 hora por defecto); para cortarlo
+de inmediato, cierra sus sesiones desde **Authentication > Users >
+usuario > Sign out user** (o borra el usuario).
+
+### Recuperación
+
+- Recomendado: registrar un **segundo factor TOTP de respaldo** (otro
+  dispositivo o un gestor de contraseñas) y guardarlo en un lugar seguro.
+- Si se pierden todos los factores: en **Authentication > Users >
+  usuario > MFA** borra el factor; en el siguiente login a `/admin` se
+  vuelve a enrolar un TOTP nuevo.
+
+### Orden de despliegue
+
+1. Activar TOTP en el dashboard (**Authentication > Multi-Factor**).
+2. Desplegar el frontend en Vercel.
+3. Aplicar la migración `0005_admin_rol_mfa.sql`.
+4. El admin cierra sesión, vuelve a entrar en `/admin` y enrola su TOTP.
+
+Entre (3) y (4) el admin no puede editar nada (su sesión es `aal1` y/o
+su JWT aún no trae el rol); es lo esperado.
 
 ## Protección anti-abuso / DDoS (capa 7)
 

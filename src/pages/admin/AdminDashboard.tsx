@@ -7,11 +7,11 @@ import AdminPedidos from './AdminPedidos'
 type Tab = 'inventario' | 'pedidos'
 
 export default function AdminDashboard() {
-  const { session, isAdmin, loading, signOut } = useAuth()
+  const { session, isAdmin, currentLevel, loading, signOut } = useAuth()
   const [tab, setTab] = useState<Tab>('inventario')
 
   if (loading) return null
-  if (!session || !isAdmin) return <Navigate to="/admin" replace />
+  if (!session || !isAdmin || currentLevel !== 'aal2') return <Navigate to="/admin" replace />
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
