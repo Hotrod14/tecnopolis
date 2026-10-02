@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Tienda from './pages/Tienda'
 import Checkout from './pages/Checkout'
@@ -7,6 +7,7 @@ import CuentaLogin from './pages/CuentaLogin'
 import MisPedidos from './pages/MisPedidos'
 import AdminLogin from './pages/admin/AdminLogin'
 import AdminDashboard from './pages/admin/AdminDashboard'
+import AdminRoute from './components/AdminRoute'
 import { AuthProvider } from './context/AuthContext'
 
 export default function App() {
@@ -22,7 +23,17 @@ export default function App() {
             <Route path="/login" element={<CuentaLogin />} />
             <Route path="/mis-pedidos" element={<MisPedidos />} />
             <Route path="/admin" element={<AdminLogin />} />
-            <Route path="/admin/dashboard" element={<AdminDashboard />} />
+            <Route
+              path="/admin/*"
+              element={
+                <AdminRoute>
+                  <Routes>
+                    <Route path="dashboard" element={<AdminDashboard />} />
+                    <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
+                  </Routes>
+                </AdminRoute>
+              }
+            />
           </Routes>
         </main>
       </div>
