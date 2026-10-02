@@ -14,8 +14,8 @@ interface AuthContextValue {
   session: Session | null
   loading: boolean
   isAdmin: boolean
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>
-  signUp: (email: string, password: string) => Promise<{ error: string | null }>
+  signIn: (email: string, password: string, captchaToken?: string | null) => Promise<{ error: string | null }>
+  signUp: (email: string, password: string, captchaToken?: string | null) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
 }
 
@@ -38,14 +38,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => listener.subscription.unsubscribe()
   }, [])
 
-  async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+  // captchaToken: requerido por Supabase Auth cuando se activa la
+  // proteccion con captcha (Authentication > Attack Protection).
+  async function signIn(email: string, password: string, captchaToken?: string | null) {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+      options: captchaToken ? { captchaToken } : undefined,
+    })
     if (error) return { error: error.message }
     return { error: null }
   }
 
-  async function signUp(email: string, password: string) {
-    const { error } = await supabase.auth.signUp({ email, password })
+  async function signUp(email: string, password: string, captchaToken?: string | null) {
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: captchaToken ? { captchaToken } : undefined,
+    })
     if (error) return { error: error.message }
     return { error: null }
   }

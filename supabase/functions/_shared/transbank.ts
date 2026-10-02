@@ -56,6 +56,7 @@ export async function crearTransaccionTransbank(params: {
   const res = await fetch(`${TRANSBANK_BASE_URL}/rswebpaytransaction/api/webpay/v1.2/transactions`, {
     method: 'POST',
     headers: TRANSBANK_HEADERS,
+    signal: AbortSignal.timeout(15000),
     body: JSON.stringify({
       buy_order: params.buyOrder,
       session_id: params.sessionId,
@@ -80,6 +81,7 @@ export async function confirmarTransaccionTransbank(
     {
       method: 'PUT',
       headers: TRANSBANK_HEADERS,
+      signal: AbortSignal.timeout(15000),
     },
   )
 

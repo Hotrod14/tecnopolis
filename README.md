@@ -25,6 +25,7 @@ Functions, Realtime, Storage).
    - `supabase/migrations/0001_init.sql`
    - `supabase/migrations/0002_storage.sql`
    - `supabase/migrations/0003_envio_y_cuentas.sql`
+   - `supabase/migrations/0004_hardening_ddos.sql`
    (o usa `supabase db push` con la CLI si tienes el proyecto linkeado).
 3. En **Authentication > Users**, crea manualmente el usuario admin con
    email `ce2full@gmail.com` (el que las políticas RLS reconocen como
@@ -146,10 +147,62 @@ npm run dev
 
 - `productos`: lectura pública; escritura solo para el usuario autenticado
   `ce2full@gmail.com`.
-- `ordenes`: inserción pública solo en estado `pendiente` (y con
-  `usuario_id` nulo o igual al del usuario autenticado que la crea). Un
+- `ordenes`: **sin inserción pública** (desde la migración `0004`); solo
+  `crear-pago-webpay` crea órdenes, con la Service Role Key. Un
   cliente autenticado puede leer **solo sus propias** órdenes; el admin
   (`ce2full@gmail.com`) puede leer y actualizar **todas**. No hay policy
   de `UPDATE` para clientes — los cambios de estado por pago los hacen
   las Edge Functions con la Service Role Key (que siempre evita RLS), y
   los cambios de estado por envío los hace el admin desde `/admin`.
+
+## Protección anti-abuso / DDoS (capa 7)
+
+Los ataques volumétricos (capas 3/4) los absorben Vercel y la red de
+Supabase. Lo que protege este repo es el abuso a nivel de aplicación:
+
+| Medida | Dónde |
+| --- | --- |
+| Órdenes solo vía Edge Function (sin insert público) | `0004_hardening_ddos.sql` |
+| Rate limit por IP y global (tabla `rate_limits` + `check_rate_limit`) | `0004` + `_shared/rateLimit.ts` |
+| Validación de payload: máx. 16 KB, 20 productos, 1–10 unidades, UUIDs, largos de texto | `_shared/validacion.ts` |
+| Captcha Cloudflare Turnstile en pago, login y registro (opcional) | `_shared/turnstile.ts`, `src/components/Turnstile.tsx` |
+| Caché de 10 min de cotizaciones de EnviosChile + timeouts a APIs externas | `_shared/envio.ts`, `_shared/transbank.ts` |
+| CORS restringido a los orígenes del frontend | `_shared/cors.ts` |
+| Errores internos genéricos (no se filtran mensajes de la BD) | `_shared/respuesta.ts` |
+| Expiración automática de órdenes `pendiente` (>1 h) y limpieza de contadores (pg_cron) | `0004` |
+| Tienda paginada (24 por página) y realtime sin recargar todo el catálogo | `src/pages/Tienda.tsx` |
+| Headers de seguridad y caché de assets | `vercel.json` |
+
+Límites por defecto:
+
+- `calcular-envio`: 20/min por IP, 600/min global.
+- `crear-pago-webpay`: 5/min y 30/h por IP, 120/min global.
+- `confirmar-pago-webpay`: 30/min por IP.
+
+### Pasos de configuración
+
+1. Ejecuta `supabase/migrations/0004_hardening_ddos.sql` (requiere la
+   extensión **pg_cron**, disponible en todos los planes de Supabase).
+2. Redespliega las tres Edge Functions.
+3. Restringe CORS:
+   ```bash
+   supabase secrets set ALLOWED_ORIGINS=https://tu-sitio.vercel.app,http://localhost:5173
+   ```
+4. Captcha (recomendado):
+   1. En Cloudflare > **Turnstile** crea un sitio con tu dominio de Vercel
+      (y `localhost` para desarrollo).
+   2. Frontend (Vercel > Environment Variables y `.env`):
+      `VITE_TURNSTILE_SITE_KEY=<site key>`
+   3. Edge Functions: `supabase secrets set TURNSTILE_SECRET_KEY=<secret key>`
+   4. Supabase > **Authentication > Attack Protection** > activa
+      *Captcha protection* con proveedor Turnstile y la misma secret key.
+   Mientras estas claves no estén configuradas, el captcha queda
+   desactivado y todo sigue funcionando.
+5. En Vercel > **Firewall** activa reglas de rate limit y deja a mano
+   *Attack Challenge Mode* para emergencias.
+6. En Supabase > **Usage** configura alertas y el *spend cap*.
+
+> Nota: el rate limit identifica la IP con `cf-connecting-ip` /
+> `x-real-ip` / `x-forwarded-for`. Si las IPs registradas en
+> `rate_limits` se ven todas iguales o falsificables, ajusta
+> `ipCliente()` en `_shared/rateLimit.ts`.

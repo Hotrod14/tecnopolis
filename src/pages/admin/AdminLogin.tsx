@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import Turnstile, { TURNSTILE_SITE_KEY } from '../../components/Turnstile'
 
 export default function AdminLogin() {
   const { session, isAdmin, loading, signIn, signOut } = useAuth()
@@ -8,13 +9,16 @@ export default function AdminLogin() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const [captchaReset, setCaptchaReset] = useState(0)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
     setSubmitting(true)
-    const { error } = await signIn(email, password)
+    const { error } = await signIn(email, password, captchaToken)
     setSubmitting(false)
+    setCaptchaReset((n) => n + 1)
     if (error) setError(error)
   }
 
@@ -61,9 +65,10 @@ export default function AdminLogin() {
           className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
         />
         {error && <p className="text-sm text-red-500">{error}</p>}
+        <Turnstile onToken={setCaptchaToken} resetKey={captchaReset} />
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || (Boolean(TURNSTILE_SITE_KEY) && !captchaToken)}
           className="rounded-md bg-neutral-900 py-2 text-sm font-semibold text-white hover:bg-neutral-700 disabled:bg-neutral-400"
         >
           {submitting ? 'Ingresando...' : 'Ingresar'}

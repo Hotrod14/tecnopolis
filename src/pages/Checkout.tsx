@@ -6,6 +6,10 @@ import { supabase } from '../lib/supabaseClient'
 import { formatoCLP } from '../lib/format'
 import { REGIONES_CHILE } from '../lib/regiones'
 import type { OpcionEnvio } from '../types'
+import Turnstile, { TURNSTILE_SITE_KEY } from '../components/Turnstile'
+
+// Debe coincidir con MAX_CANTIDAD en supabase/functions/_shared/validacion.ts
+const MAX_CANTIDAD_POR_PRODUCTO = 10
 
 interface DireccionForm {
   nombre: string
@@ -43,6 +47,8 @@ export default function Checkout() {
   const [error, setError] = useState<string | null>(null)
   const [redirect, setRedirect] = useState<{ url: string; token: string } | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const [captchaReset, setCaptchaReset] = useState(0)
 
   useEffect(() => {
     if (session?.user?.email && !direccion.email) {
@@ -88,7 +94,7 @@ export default function Checkout() {
       setOpciones(data.opciones)
       setOpcionElegida(data.opciones[0])
     } catch (err) {
-      setErrorEnvio(err instanceof Error ? err.message : 'No se pudo cotizar el envío.')
+      setErrorEnvio(await mensajeDeError(err, 'No se pudo cotizar el envío.'))
     } finally {
       setCalculandoEnvio(false)
     }
@@ -104,6 +110,7 @@ export default function Checkout() {
           items: items.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad })),
           direccionEnvio: direccion,
           tipoEntrega: opcionElegida.tipoEntrega,
+          captchaToken,
         },
       })
 
@@ -112,8 +119,10 @@ export default function Checkout() {
 
       setRedirect({ url: data.url, token: data.token })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo iniciar el pago.')
+      setError(await mensajeDeError(err, 'No se pudo iniciar el pago.'))
       setLoading(false)
+      // Los tokens de Turnstile son de un solo uso: pedimos uno nuevo.
+      setCaptchaReset((n) => n + 1)
     }
   }
 
@@ -160,7 +169,7 @@ export default function Checkout() {
             <input
               type="number"
               min={1}
-              max={item.stockDisponible}
+              max={Math.min(item.stockDisponible, MAX_CANTIDAD_POR_PRODUCTO)}
               value={item.cantidad}
               onChange={(e) => updateCantidad(item.producto_id, Number(e.target.value))}
               className="w-16 rounded-md border border-neutral-300 px-2 py-1 text-center text-sm"
@@ -306,9 +315,13 @@ export default function Checkout() {
 
       {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
 
+      <Turnstile onToken={setCaptchaToken} resetKey={captchaReset} />
+
       <button
         onClick={pagarConWebpay}
-        disabled={loading || !opcionElegida || !direccionCompleta}
+        disabled={
+          loading || !opcionElegida || !direccionCompleta || (Boolean(TURNSTILE_SITE_KEY) && !captchaToken)
+        }
         className="mt-6 w-full rounded-md bg-neutral-900 py-3 text-sm font-semibold text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-400"
       >
         {loading
@@ -319,4 +332,18 @@ export default function Checkout() {
       </button>
     </div>
   )
+}
+
+/** Extrae el mensaje { error } que devuelven las Edge Functions (incluye 429). */
+async function mensajeDeError(err: unknown, porDefecto: string): Promise<string> {
+  const contexto = (err as { context?: unknown })?.context
+  if (contexto instanceof Response) {
+    try {
+      const body = (await contexto.clone().json()) as { error?: string }
+      if (body?.error) return body.error
+    } catch {
+      // respuesta sin JSON
+    }
+  }
+  return err instanceof Error ? err.message : porDefecto
 }

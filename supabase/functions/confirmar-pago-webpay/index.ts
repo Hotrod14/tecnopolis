@@ -16,14 +16,33 @@
 
 import { supabaseAdmin } from '../_shared/supabaseAdmin.ts'
 import { confirmarTransaccionTransbank } from '../_shared/transbank.ts'
+import { dentroDelLimite } from '../_shared/rateLimit.ts'
 
 const FRONTEND_URL = Deno.env.get('FRONTEND_URL') ?? 'http://localhost:5173'
 
+// Esta funcion es publica (Transbank redirige el navegador sin JWT).
+// Un cliente real la invoca 1 vez por pago; 30/min por IP es holgado.
+const LIMITE_IP = { max: 30, ventana: 60 }
+const MAX_BODY_BYTES = 4 * 1024
+// Los tokens de Webpay tienen 64 caracteres hex.
+const TOKEN_RE = /^[A-Za-z0-9]{1,128}$/
+
 Deno.serve(async (req) => {
   try {
+    if (!(await dentroDelLimite(req, 'confirmar-pago', LIMITE_IP.max, LIMITE_IP.ventana))) {
+      return new Response('Demasiadas solicitudes', {
+        status: 429,
+        headers: { 'Retry-After': String(LIMITE_IP.ventana) },
+      })
+    }
+
     const params = await extraerParametros(req)
     const tokenWs = params.get('token_ws')
     const tbkToken = params.get('TBK_TOKEN')
+
+    if ((tokenWs && !TOKEN_RE.test(tokenWs)) || (tbkToken && !TOKEN_RE.test(tbkToken))) {
+      return redirectRetorno({ estado: 'rechazado', motivo: 'token_invalido' })
+    }
 
     if (!tokenWs && tbkToken) {
       const ordenId = await rechazarOrdenPorToken(tbkToken)
@@ -58,6 +77,7 @@ Deno.serve(async (req) => {
           .from('ordenes')
           .update({ estado: 'rechazado' })
           .eq('id', orden.id)
+          .eq('estado', 'pendiente')
         return redirectRetorno({
           estado: 'rechazado',
           ordenId: orden.id,
@@ -68,7 +88,7 @@ Deno.serve(async (req) => {
       return redirectRetorno({ estado: 'pagado', ordenId: orden.id })
     }
 
-    await supabaseAdmin.from('ordenes').update({ estado: 'rechazado' }).eq('id', orden.id)
+    await supabaseAdmin.from('ordenes').update({ estado: 'rechazado' }).eq('id', orden.id).eq('estado', 'pendiente')
     return redirectRetorno({ estado: 'rechazado', ordenId: orden.id })
   } catch (error) {
     console.error(error)
@@ -79,14 +99,13 @@ Deno.serve(async (req) => {
 async function extraerParametros(req: Request): Promise<URLSearchParams> {
   const url = new URL(req.url)
   if (req.method === 'POST') {
+    const largo = Number(req.headers.get('content-length') ?? '0')
+    if (largo > MAX_BODY_BYTES) return new URLSearchParams()
     const contentType = req.headers.get('content-type') ?? ''
     if (contentType.includes('application/x-www-form-urlencoded')) {
       const body = await req.text()
+      if (body.length > MAX_BODY_BYTES) return new URLSearchParams()
       return new URLSearchParams(body)
-    }
-    if (contentType.includes('application/json')) {
-      const body = await req.json()
-      return new URLSearchParams(body as Record<string, string>)
     }
   }
   return url.searchParams
@@ -101,7 +120,7 @@ async function rechazarOrdenPorToken(tbkToken: string): Promise<string | undefin
 
   if (!orden) return undefined
 
-  await supabaseAdmin.from('ordenes').update({ estado: 'rechazado' }).eq('id', orden.id)
+  await supabaseAdmin.from('ordenes').update({ estado: 'rechazado' }).eq('id', orden.id).eq('estado', 'pendiente')
   return orden.id
 }
 

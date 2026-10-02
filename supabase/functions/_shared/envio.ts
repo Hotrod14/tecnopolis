@@ -57,6 +57,20 @@ export function calcularBulto(
   return bulto
 }
 
+// Cache en memoria (por instancia de la Edge Function) de las
+// cotizaciones de EnviosChile. Evita que un flood de "Calcular envio"
+// se traduzca 1:1 en llamadas (y costos) a la API externa.
+const CACHE_TTL_MS = 10 * 60 * 1000
+const CACHE_MAX_ENTRADAS = 500
+const cacheCotizaciones = new Map<string, { expira: number; valor: CotizacionEnvio }>()
+
+function claveCache(params: { comuna: string; bulto: Bulto; valorDeclarado: number }): string {
+  const { bulto } = params
+  // El valor declarado se redondea a miles para mejorar la tasa de aciertos.
+  const valor = Math.ceil(params.valorDeclarado / 1000)
+  return [params.comuna.trim().toUpperCase(), bulto.peso, bulto.alto, bulto.ancho, bulto.largo, valor].join('|')
+}
+
 export async function cotizarEnvio(params: {
   region: string
   comuna: string
@@ -64,8 +78,19 @@ export async function cotizarEnvio(params: {
   valorDeclarado: number
 }): Promise<CotizacionEnvio> {
   if (ENVIOSCHILE_API_KEY) {
+    const clave = claveCache(params)
+    const enCache = cacheCotizaciones.get(clave)
+    if (enCache && enCache.expira > Date.now()) return enCache.valor
+
     const viaApi = await cotizarConEnviosChile(params)
-    if (viaApi) return viaApi
+    if (viaApi) {
+      if (cacheCotizaciones.size >= CACHE_MAX_ENTRADAS) {
+        const masAntigua = cacheCotizaciones.keys().next().value
+        if (masAntigua !== undefined) cacheCotizaciones.delete(masAntigua)
+      }
+      cacheCotizaciones.set(clave, { expira: Date.now() + CACHE_TTL_MS, valor: viaApi })
+      return viaApi
+    }
   }
 
   return { opciones: cotizarConTablaPropia(params.region, params.bulto), fuente: 'tabla_propia' }
@@ -80,6 +105,8 @@ async function cotizarConEnviosChile(params: {
   try {
     const res = await fetch(`${ENVIOSCHILE_BASE_URL}/api/v1/quote`, {
       method: 'POST',
+      // Si la API externa se cuelga, no dejamos la funcion esperando.
+      signal: AbortSignal.timeout(5000),
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': ENVIOSCHILE_API_KEY!,

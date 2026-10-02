@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import Turnstile, { TURNSTILE_SITE_KEY } from '../components/Turnstile'
 
 export default function CuentaLogin() {
   const { session, loading, signIn, signUp } = useAuth()
@@ -11,6 +12,8 @@ export default function CuentaLogin() {
   const [error, setError] = useState<string | null>(null)
   const [mensaje, setMensaje] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const [captchaReset, setCaptchaReset] = useState(0)
 
   if (loading) return null
   if (session) return <Navigate to="/mis-pedidos" replace />
@@ -22,15 +25,17 @@ export default function CuentaLogin() {
     setSubmitting(true)
 
     if (modo === 'login') {
-      const { error } = await signIn(email, password)
+      const { error } = await signIn(email, password, captchaToken)
       setSubmitting(false)
+    setCaptchaReset((n) => n + 1)
       if (error) return setError(error)
       navigate('/mis-pedidos')
       return
     }
 
-    const { error } = await signUp(email, password)
+    const { error } = await signUp(email, password, captchaToken)
     setSubmitting(false)
+    setCaptchaReset((n) => n + 1)
     if (error) return setError(error)
     setMensaje('Cuenta creada. Si tu proyecto pide confirmación por correo, revisa tu bandeja antes de ingresar.')
   }
@@ -60,9 +65,10 @@ export default function CuentaLogin() {
         />
         {error && <p className="text-sm text-red-500">{error}</p>}
         {mensaje && <p className="text-sm text-green-600">{mensaje}</p>}
+        <Turnstile onToken={setCaptchaToken} resetKey={captchaReset} />
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || (Boolean(TURNSTILE_SITE_KEY) && !captchaToken)}
           className="rounded-md bg-neutral-900 py-2 text-sm font-semibold text-white hover:bg-neutral-700 disabled:bg-neutral-400"
         >
           {submitting
