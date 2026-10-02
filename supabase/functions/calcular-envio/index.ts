@@ -6,33 +6,45 @@
 // navegador). Devuelve las opciones ordenadas de mas barata a mas
 // cara; el frontend puede usar la primera como "la mas conveniente"
 // o dejar que el cliente elija otra (ej. domicilio en vez de agencia).
+//
+// Proteccion anti-abuso: payload acotado, rate limit por IP y global,
+// y cache de cotizaciones (ver _shared/envio.ts).
 
 import { supabaseAdmin } from '../_shared/supabaseAdmin.ts'
-import { corsHeaders } from '../_shared/cors.ts'
+import { corsHeadersPara } from '../_shared/cors.ts'
 import { cotizarEnvio, calcularBulto } from '../_shared/envio.ts'
+import { REGIONES_CHILE } from '../_shared/regiones.ts'
+import { dentroDelLimite, dentroDelLimiteGlobal } from '../_shared/rateLimit.ts'
+import { ErrorValidacion, leerJson, validarItems, validarTexto } from '../_shared/validacion.ts'
+import { json, demasiadasSolicitudes, errorARespuesta } from '../_shared/respuesta.ts'
 
-interface CarritoItemInput {
-  producto_id: string
-  cantidad: number
-}
+// 20 cotizaciones por minuto por IP; 600 por minuto en total.
+const LIMITE_IP = { max: 20, ventana: 60 }
+const LIMITE_GLOBAL = { max: 600, ventana: 60 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response('ok', { headers: corsHeadersPara(req) })
+  }
+  if (req.method !== 'POST') {
+    return json(req, { error: 'Metodo no permitido.' }, 405)
   }
 
   try {
-    const { items, region, comuna } = (await req.json()) as {
-      items: CarritoItemInput[]
-      region: string
-      comuna: string
+    if (!(await dentroDelLimite(req, 'calcular-envio', LIMITE_IP.max, LIMITE_IP.ventana))) {
+      return demasiadasSolicitudes(req, LIMITE_IP.ventana)
+    }
+    if (!(await dentroDelLimiteGlobal('calcular-envio', LIMITE_GLOBAL.max, LIMITE_GLOBAL.ventana))) {
+      return demasiadasSolicitudes(req, LIMITE_GLOBAL.ventana)
     }
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return json({ error: 'El carrito esta vacio.' }, 400)
-    }
-    if (!region || !comuna) {
-      return json({ error: 'Falta region o comuna de destino.' }, 400)
+    const body = await leerJson<{ items: unknown; region: unknown; comuna: unknown }>(req)
+    const items = validarItems(body.items)
+    const region = validarTexto(body.region, 'la region', 80)
+    const comuna = validarTexto(body.comuna, 'la comuna', 80)
+
+    if (!REGIONES_CHILE.some((r) => r.nombre === region)) {
+      throw new ErrorValidacion('Region invalida.')
     }
 
     const productoIds = items.map((i) => i.producto_id)
@@ -43,7 +55,7 @@ Deno.serve(async (req) => {
 
     if (error) throw error
     if (!productos || productos.length !== productoIds.length) {
-      return json({ error: 'Uno o mas productos del carrito ya no existen.' }, 400)
+      throw new ErrorValidacion('Uno o mas productos del carrito ya no existen.')
     }
 
     const valorDeclarado = items.reduce((acc, item) => {
@@ -55,16 +67,8 @@ Deno.serve(async (req) => {
 
     const cotizacion = await cotizarEnvio({ region, comuna, bulto, valorDeclarado })
 
-    return json(cotizacion)
+    return json(req, cotizacion)
   } catch (err) {
-    console.error(err)
-    return json({ error: (err as Error).message ?? 'Error interno.' }, 500)
+    return errorARespuesta(req, err)
   }
 })
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  })
-}

@@ -40,7 +40,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   function addItem(producto: Producto, cantidad = 1) {
     setItems((prev) => {
       const existing = prev.find((i) => i.producto_id === producto.id)
-      const maxStock = producto.stock
+      // Tope de 10 unidades por producto (igual que MAX_CANTIDAD en las Edge Functions).
+      const maxStock = Math.min(producto.stock, 10)
       if (existing) {
         const nuevaCantidad = Math.min(existing.cantidad + cantidad, maxStock)
         return prev.map((i) =>
