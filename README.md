@@ -132,6 +132,23 @@ npm run dev
 - `crear-pago-webpay` **recalcula el costo de envío en el servidor** con
   la misma lógica, nunca confía en un monto que mande el navegador.
 
+### Dirección de envío
+
+- **Buscador de direcciones:** al escribir calle y número, el checkout ofrece direcciones reales y el cliente confirma eligiendo una. Usa [Photon](https://photon.komoot.io), con datos de OpenStreetMap, gratuito y sin clave. Solo se aceptan resultados de Chile cuya comuna exista en la lista oficial (`src/lib/comunas.ts`).
+- **Calle sin número:** si el cliente elige una calle sin número, la confirma y escribe el número.
+- **Ingreso manual:** si no encuentra su dirección, o si el buscador no responde, puede ingresarla a mano con "No encuentro mi dirección".
+- **Registro en el pedido:** cada pedido guarda en `direccion_envio.verificacion` cómo se obtuvo la dirección:
+
+  | Valor | Significado |
+  | --- | --- |
+  | `completa` | Calle y número vienen del buscador |
+  | `calle` | La calle viene del buscador; el número lo escribió el cliente |
+  | `manual` | Ingresada a mano |
+
+  También guarda las coordenadas `lat`/`lon`. El admin ve una etiqueta con este estado y un enlace al mapa. Es información de apoyo para el despacho: la envía el navegador, no es una garantía.
+- **Uso justo de Photon:** el servidor público de Photon es de uso justo. Para más volumen, monta una instancia propia y define `VITE_PHOTON_URL`.
+- **Direcciones guardadas:** el checkout ofrece las direcciones usadas antes. Pueden venir de este navegador o, con sesión iniciada, de pedidos anteriores.
+
 ## Cuentas de cliente
 
 - La compra sigue funcionando como invitado (sin cuenta), dejando los

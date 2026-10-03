@@ -21,6 +21,8 @@ import {
 } from '../lib/direcciones'
 import type { DireccionEnvio, OpcionEnvio } from '../types'
 import Turnstile, { TURNSTILE_SITE_KEY } from '../components/Turnstile'
+import BuscadorDireccion from '../components/BuscadorDireccion'
+import type { SugerenciaDireccion } from '../lib/geocoder'
 
 export default function Checkout() {
   const { items, total: subtotal, updateCantidad, removeItem, restoreItem } = useCart()
@@ -139,8 +141,59 @@ export default function Checkout() {
     }
   }
 
+  const numeroRef = useRef<HTMLInputElement>(null)
+
+  function elegirSugerencia(s: SugerenciaDireccion) {
+    setDireccion((d) => ({
+      ...d,
+      calle: s.calle,
+      numero: s.numero ?? '',
+      comuna: s.comuna,
+      region: s.region,
+      lat: s.lat,
+      lon: s.lon,
+      verificacion: s.numero ? 'completa' : 'calle',
+    }))
+    setErrorEnvio(null)
+    invalidarCotizacion()
+    // Si la sugerencia era solo la calle, falta el numero.
+    if (!s.numero) requestAnimationFrame(() => numeroRef.current?.focus())
+  }
+
+  function cambiarNumero(numero: string) {
+    // Si el numero confirmado se edita, ya solo esta verificada la calle.
+    setDireccion((d) => ({
+      ...d,
+      numero,
+      verificacion: d.verificacion === 'completa' ? 'calle' : d.verificacion,
+    }))
+    invalidarCotizacion()
+  }
+
+  function buscarOtraDireccion() {
+    setDireccion((d) => ({
+      ...d,
+      calle: '',
+      numero: '',
+      comuna: '',
+      region: '',
+      lat: undefined,
+      lon: undefined,
+      verificacion: undefined,
+    }))
+    setErrorEnvio(null)
+    invalidarCotizacion()
+  }
+
+  function ingresarManual() {
+    setDireccion((d) => ({ ...d, verificacion: 'manual', lat: undefined, lon: undefined }))
+    invalidarCotizacion()
+  }
+
   function usarDireccion(d: DireccionForm) {
-    setDireccion({ ...d, email: d.email || session?.user?.email || '' })
+    // Direcciones guardadas antes de existir el buscador no traen
+    // verificacion: se muestran como ingresadas a mano.
+    setDireccion({ ...d, email: d.email || session?.user?.email || '', verificacion: d.verificacion ?? 'manual' })
     setErrorEnvio(null)
     invalidarCotizacion()
   }
@@ -406,58 +459,114 @@ export default function Checkout() {
             className={CLASE_INPUT}
           />
         </Campo>
-        <Campo etiqueta="Región">
-          <select
-            required
-            value={direccion.region}
-            onChange={(e) => cambiarRegion(e.target.value)}
-            className={CLASE_INPUT}
-          >
-            <option value="">Selecciona tu región</option>
-            {REGIONES_CHILE.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </Campo>
-        <Campo etiqueta="Comuna">
-          <input
-            required
-            list="lista-comunas"
-            autoComplete="address-level2"
-            placeholder={direccion.region ? 'Escribe para buscar' : 'Escribe tu comuna'}
-            value={direccion.comuna}
-            onChange={(e) => cambiarComuna(e.target.value)}
-            onBlur={normalizarComuna}
-            className={CLASE_INPUT}
-          />
-          <datalist id="lista-comunas">
-            {direccion.region
-              ? (COMUNAS_POR_REGION[direccion.region] ?? []).map((c) => <option key={c} value={c} />)
-              : TODAS_LAS_COMUNAS.map(({ comuna, region }) => (
-                  <option key={comuna} value={comuna} label={region} />
-                ))}
-          </datalist>
-        </Campo>
-        <Campo etiqueta="Calle">
-          <input
-            required
-            autoComplete="address-line1"
-            value={direccion.calle}
-            onChange={(e) => actualizarCampo('calle', e.target.value)}
-            className={CLASE_INPUT}
-          />
-        </Campo>
-        <Campo etiqueta="Número">
-          <input
-            required
-            inputMode="numeric"
-            value={direccion.numero}
-            onChange={(e) => actualizarCampo('numero', e.target.value)}
-            className={CLASE_INPUT}
-          />
-        </Campo>
+        <div className="flex flex-col gap-1 sm:col-span-2">
+          <span className="text-xs font-medium text-neutral-600">Dirección</span>
+          {!direccion.verificacion ? (
+            <>
+              <BuscadorDireccion onElegir={elegirSugerencia} onNoEncuentro={ingresarManual} />
+              <p className="text-xs text-neutral-500">
+                Escribe tu calle y número y elige tu dirección de la lista.{' '}
+                <button type="button" onClick={ingresarManual} className="underline">
+                  Prefiero escribirla a mano
+                </button>
+              </p>
+            </>
+          ) : direccion.verificacion === 'manual' ? (
+            <p className="text-xs text-neutral-500">
+              Ingresando la dirección a mano.{' '}
+              <button type="button" onClick={buscarOtraDireccion} className="underline">
+                Volver a buscarla
+              </button>
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3 rounded-md border border-green-200 bg-green-50 p-3 sm:flex-row sm:items-end">
+              <div className="flex-1 text-sm">
+                <p className="flex items-center gap-1 text-xs font-medium text-green-700">
+                  <span aria-hidden="true">✓</span>
+                  {direccion.verificacion === 'completa' ? 'Dirección encontrada' : 'Calle encontrada: agrega el número'}
+                </p>
+                <p className="font-medium">{direccion.calle}</p>
+                <p className="text-neutral-600">
+                  {direccion.comuna}, {direccion.region}
+                </p>
+              </div>
+              <Campo etiqueta="Número" className="sm:w-28">
+                <input
+                  ref={numeroRef}
+                  required
+                  inputMode="numeric"
+                  value={direccion.numero}
+                  onChange={(e) => cambiarNumero(e.target.value)}
+                  className={CLASE_INPUT}
+                />
+              </Campo>
+              <button
+                type="button"
+                onClick={buscarOtraDireccion}
+                className="self-start text-xs font-medium underline sm:self-end sm:pb-2"
+              >
+                Cambiar
+              </button>
+            </div>
+          )}
+        </div>
+
+        {direccion.verificacion === 'manual' && (
+          <>
+          <Campo etiqueta="Región">
+            <select
+              required
+              value={direccion.region}
+              onChange={(e) => cambiarRegion(e.target.value)}
+              className={CLASE_INPUT}
+            >
+              <option value="">Selecciona tu región</option>
+              {REGIONES_CHILE.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </Campo>
+          <Campo etiqueta="Comuna">
+            <input
+              required
+              list="lista-comunas"
+              autoComplete="address-level2"
+              placeholder={direccion.region ? 'Escribe para buscar' : 'Escribe tu comuna'}
+              value={direccion.comuna}
+              onChange={(e) => cambiarComuna(e.target.value)}
+              onBlur={normalizarComuna}
+              className={CLASE_INPUT}
+            />
+            <datalist id="lista-comunas">
+              {direccion.region
+                ? (COMUNAS_POR_REGION[direccion.region] ?? []).map((c) => <option key={c} value={c} />)
+                : TODAS_LAS_COMUNAS.map(({ comuna, region }) => (
+                    <option key={comuna} value={comuna} label={region} />
+                  ))}
+            </datalist>
+          </Campo>
+          <Campo etiqueta="Calle">
+            <input
+              required
+              autoComplete="address-line1"
+              value={direccion.calle}
+              onChange={(e) => actualizarCampo('calle', e.target.value)}
+              className={CLASE_INPUT}
+            />
+          </Campo>
+          <Campo etiqueta="Número">
+            <input
+              required
+              inputMode="numeric"
+              value={direccion.numero}
+              onChange={(e) => actualizarCampo('numero', e.target.value)}
+              className={CLASE_INPUT}
+            />
+          </Campo>
+          </>
+        )}
         <Campo etiqueta="Depto / oficina (opcional)" className="sm:col-span-2">
           <input
             autoComplete="address-line2"
@@ -475,12 +584,12 @@ export default function Checkout() {
 
         <button
           type="submit"
-          disabled={!direccion.region || !direccion.comuna || calculandoEnvio}
+          disabled={!direccion.region || !direccion.comuna || !direccion.calle || !direccion.numero || calculandoEnvio}
           className="mt-1 rounded-md border border-neutral-900 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:border-neutral-300 disabled:text-neutral-400 sm:col-span-2"
         >
           {calculandoEnvio ? 'Calculando...' : opciones ? 'Recalcular envío' : 'Calcular envío'}
         </button>
-        {(!direccion.region || !direccion.comuna) && (
+        {direccion.verificacion === 'manual' && (!direccion.region || !direccion.comuna) && (
           <p className="-mt-1 text-xs text-neutral-500 sm:col-span-2">
             Elige tu región y busca tu comuna (o escribe la comuna y la región se completa sola).
           </p>
