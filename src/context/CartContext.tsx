@@ -9,10 +9,20 @@ import type { CartItem, Producto } from '../types'
 
 const STORAGE_KEY = 'tecnopolis_cart'
 
+// 'agregado': se sumo al carrito; 'limite': ya estaba en el maximo
+// permitido (stock o 10 unidades) y no se agrego nada.
+export type ResultadoAgregar = 'agregado' | 'limite'
+
+// Tope de 10 unidades por producto (igual que MAX_CANTIDAD en las Edge Functions).
+export const MAX_POR_PRODUCTO = 10
+
 interface CartContextValue {
   items: CartItem[]
-  addItem: (producto: Producto, cantidad?: number) => void
+  addItem: (producto: Producto, cantidad?: number) => ResultadoAgregar
   removeItem: (productoId: string) => void
+  /** Vuelve a poner un item quitado (para el boton "Deshacer"). */
+  restoreItem: (item: CartItem) => void
+  cantidadEnCarrito: (productoId: string) => number
   updateCantidad: (productoId: string, cantidad: number) => void
   clearCart: () => void
   total: number
@@ -37,11 +47,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
   }, [items])
 
-  function addItem(producto: Producto, cantidad = 1) {
+  function addItem(producto: Producto, cantidad = 1): ResultadoAgregar {
+    const maxStock = Math.min(producto.stock, MAX_POR_PRODUCTO)
+    const actual = items.find((i) => i.producto_id === producto.id)?.cantidad ?? 0
+    if (actual >= maxStock) return 'limite'
+
     setItems((prev) => {
       const existing = prev.find((i) => i.producto_id === producto.id)
-      // Tope de 10 unidades por producto (igual que MAX_CANTIDAD en las Edge Functions).
-      const maxStock = Math.min(producto.stock, 10)
       if (existing) {
         const nuevaCantidad = Math.min(existing.cantidad + cantidad, maxStock)
         return prev.map((i) =>
@@ -60,6 +72,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
         },
       ]
     })
+    return 'agregado'
+  }
+
+  function restoreItem(item: CartItem) {
+    setItems((prev) =>
+      prev.some((i) => i.producto_id === item.producto_id) ? prev : [...prev, item],
+    )
+  }
+
+  function cantidadEnCarrito(productoId: string) {
+    return items.find((i) => i.producto_id === productoId)?.cantidad ?? 0
   }
 
   function removeItem(productoId: string) {
@@ -87,7 +110,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   return (
     <CartContext.Provider
-      value={{ items, addItem, removeItem, updateCantidad, clearCart, total, count }}
+      value={{
+        items,
+        addItem,
+        removeItem,
+        restoreItem,
+        cantidadEnCarrito,
+        updateCantidad,
+        clearCart,
+        total,
+        count,
+      }}
     >
       {children}
     </CartContext.Provider>

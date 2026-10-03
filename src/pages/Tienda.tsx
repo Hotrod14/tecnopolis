@@ -24,9 +24,10 @@ export default function Tienda() {
       .range(desde, desde + TAMANO_PAGINA - 1)
 
     if (error) {
-      setError(error.message)
+      setError('No pudimos cargar los productos. Revisa tu conexión e inténtalo de nuevo.')
       return
     }
+    setError(null)
     const pagina = (data ?? []) as Producto[]
     setProductos((prev) => {
       const ids = new Set(prev.map((p) => p.id))
@@ -73,6 +74,12 @@ export default function Tienda() {
     }
   }, [cargarPagina])
 
+  async function reintentar() {
+    setLoading(true)
+    await cargarPagina(0)
+    setLoading(false)
+  }
+
   async function verMas() {
     setCargandoMas(true)
     await cargarPagina(productos.length)
@@ -83,19 +90,29 @@ export default function Tienda() {
     <div className="mx-auto max-w-6xl px-4 py-8">
       <h1 className="mb-6 text-2xl font-bold">Catálogo</h1>
 
-      {loading && <p className="text-neutral-500">Cargando productos...</p>}
-      {error && <p className="text-red-500">Error: {error}</p>}
+      {error && (
+        <div className="mb-6 flex flex-col items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between">
+          <p>{error}</p>
+          <button
+            onClick={reintentar}
+            className="rounded-md border border-red-300 bg-white px-3 py-1.5 font-medium hover:bg-red-100"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
 
       {!loading && !error && productos.length === 0 && (
-        <p className="text-neutral-500">
-          Todavía no hay productos. Ejecuta el script de seed para poblar el catálogo.
-        </p>
+        <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-10 text-center">
+          <p className="font-medium">Aún no hay productos disponibles.</p>
+          <p className="mt-1 text-sm text-neutral-500">Vuelve pronto, estamos preparando el catálogo.</p>
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {productos.map((producto) => (
-          <ProductCard key={producto.id} producto={producto} />
-        ))}
+        {loading
+          ? Array.from({ length: 8 }, (_, i) => <TarjetaCargando key={i} />)
+          : productos.map((producto) => <ProductCard key={producto.id} producto={producto} />)}
       </div>
 
       {!loading && hayMas && (
@@ -109,6 +126,20 @@ export default function Tienda() {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+function TarjetaCargando() {
+  return (
+    <div aria-hidden="true" className="animate-pulse overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <div className="h-44 bg-neutral-100" />
+      <div className="flex flex-col gap-2 p-4">
+        <div className="h-4 w-3/4 rounded bg-neutral-200" />
+        <div className="h-3 w-full rounded bg-neutral-100" />
+        <div className="h-3 w-2/3 rounded bg-neutral-100" />
+        <div className="mt-4 h-9 rounded bg-neutral-200" />
+      </div>
     </div>
   )
 }

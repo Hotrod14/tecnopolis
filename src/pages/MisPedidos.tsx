@@ -2,26 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabaseClient'
-import { formatoCLP } from '../lib/format'
+import { formatoCLP, formatoFecha, idCorto } from '../lib/format'
+import { COLOR_ESTADO, ETIQUETA_ESTADO } from '../lib/estados'
 import type { Orden } from '../types'
-
-const ETIQUETA_ESTADO: Record<Orden['estado'], string> = {
-  pendiente: 'Pendiente de pago',
-  pagado: 'Pago confirmado',
-  rechazado: 'Pago rechazado',
-  preparando: 'Preparando pedido',
-  enviado: 'Enviado',
-  entregado: 'Entregado',
-}
-
-const COLOR_ESTADO: Record<Orden['estado'], string> = {
-  pendiente: 'bg-neutral-100 text-neutral-600',
-  pagado: 'bg-blue-100 text-blue-700',
-  rechazado: 'bg-red-100 text-red-700',
-  preparando: 'bg-amber-100 text-amber-700',
-  enviado: 'bg-indigo-100 text-indigo-700',
-  entregado: 'bg-green-100 text-green-700',
-}
 
 export default function MisPedidos() {
   const { session, loading } = useAuth()
@@ -76,12 +59,15 @@ export default function MisPedidos() {
     <div className="mx-auto max-w-3xl px-4 py-8">
       <h1 className="mb-6 text-2xl font-bold">Mis pedidos</h1>
 
-      {cargando && <p className="text-neutral-500">Cargando...</p>}
+      {cargando && <p className="text-neutral-500">Cargando tus pedidos...</p>}
 
       {!cargando && ordenes.length === 0 && (
         <div className="text-center text-neutral-500">
           <p>Todavía no tienes pedidos.</p>
-          <Link to="/" className="mt-2 inline-block text-sm font-medium underline">
+          <Link
+            to="/"
+            className="mt-4 inline-block rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+          >
             Ir a la tienda
           </Link>
         </div>
@@ -90,10 +76,15 @@ export default function MisPedidos() {
       <div className="flex flex-col gap-4">
         {ordenes.map((orden) => (
           <div key={orden.id} className="rounded-lg border border-neutral-200 bg-white p-4">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-xs text-neutral-400">{orden.id}</span>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold" title={orden.id}>
+                  Pedido #{idCorto(orden.id)}
+                </p>
+                <p className="text-xs text-neutral-500">{formatoFecha.format(new Date(orden.created_at))}</p>
+              </div>
               <span
-                className={`rounded-full px-3 py-1 text-xs font-medium ${COLOR_ESTADO[orden.estado]}`}
+                className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${COLOR_ESTADO[orden.estado]}`}
               >
                 {ETIQUETA_ESTADO[orden.estado]}
               </span>

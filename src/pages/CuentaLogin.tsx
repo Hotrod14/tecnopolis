@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 import Turnstile, { TURNSTILE_SITE_KEY } from '../components/Turnstile'
 
 export default function CuentaLogin() {
   const { session, loading, signIn, signUp } = useAuth()
   const navigate = useNavigate()
+  const toast = useToast()
   const [modo, setModo] = useState<'login' | 'registro'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -27,8 +29,9 @@ export default function CuentaLogin() {
     if (modo === 'login') {
       const { error } = await signIn(email, password, captchaToken)
       setSubmitting(false)
-    setCaptchaReset((n) => n + 1)
+      setCaptchaReset((n) => n + 1)
       if (error) return setError(error)
+      toast.exito('¡Hola de nuevo! Iniciaste sesión.')
       navigate('/mis-pedidos')
       return
     }
@@ -37,7 +40,10 @@ export default function CuentaLogin() {
     setSubmitting(false)
     setCaptchaReset((n) => n + 1)
     if (error) return setError(error)
-    setMensaje('Cuenta creada. Si tu proyecto pide confirmación por correo, revisa tu bandeja antes de ingresar.')
+    toast.exito('Cuenta creada.')
+    setMensaje('Te enviamos un correo para confirmar tu cuenta. Confírmala y luego ingresa aquí.')
+    setModo('login')
+    setPassword('')
   }
 
   return (
@@ -49,6 +55,8 @@ export default function CuentaLogin() {
         <input
           type="email"
           required
+          autoComplete="email"
+          aria-label="Correo"
           placeholder="Correo"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -58,13 +66,19 @@ export default function CuentaLogin() {
           type="password"
           required
           minLength={6}
-          placeholder="Contraseña"
+          autoComplete={modo === 'login' ? 'current-password' : 'new-password'}
+          aria-label="Contraseña"
+          placeholder={modo === 'login' ? 'Contraseña' : 'Contraseña (mínimo 6 caracteres)'}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
         />
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        {mensaje && <p className="text-sm text-green-600">{mensaje}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-red-500">
+            {error}
+          </p>
+        )}
+        {mensaje && <p className="rounded-md bg-green-50 p-3 text-sm text-green-700">{mensaje}</p>}
         <Turnstile onToken={setCaptchaToken} resetKey={captchaReset} />
         <button
           type="submit"

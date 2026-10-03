@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
-import { formatoCLP } from '../../lib/format'
+import { formatoCLP, formatoFecha, idCorto } from '../../lib/format'
+import { COLOR_ESTADO, ETIQUETA_ESTADO } from '../../lib/estados'
+import { useToast } from '../../context/ToastContext'
 import type { Orden, EstadoOrden } from '../../types'
 
 const ESTADOS: EstadoOrden[] = [
@@ -16,6 +18,7 @@ export default function AdminPedidos() {
   const [ordenes, setOrdenes] = useState<Orden[]>([])
   const [cargando, setCargando] = useState(true)
   const [guardandoId, setGuardandoId] = useState<string | null>(null)
+  const toast = useToast()
 
   useEffect(() => {
     supabase
@@ -51,10 +54,25 @@ export default function AdminPedidos() {
     }
   }, [])
 
-  async function cambiarEstado(id: string, estado: EstadoOrden) {
-    setGuardandoId(id)
-    await supabase.from('ordenes').update({ estado }).eq('id', id)
+  async function cambiarEstado(orden: Orden, estado: EstadoOrden) {
+    setGuardandoId(orden.id)
+    // Con RLS un update sin permiso no da error, solo no afecta filas.
+    const { data, error } = await supabase
+      .from('ordenes')
+      .update({ estado })
+      .eq('id', orden.id)
+      .select('id')
     setGuardandoId(null)
+
+    if (error || !data?.length) {
+      toast.error(
+        error?.message ??
+          'No se guardó el cambio. Tu sesión de administrador puede haber expirado: vuelve a ingresar.',
+      )
+      return
+    }
+    setOrdenes((prev) => prev.map((o) => (o.id === orden.id ? { ...o, estado } : o)))
+    toast.exito(`Pedido #${idCorto(orden.id)}: ${ETIQUETA_ESTADO[estado].toLowerCase()}.`)
   }
 
   if (cargando) return <p className="text-neutral-500">Cargando pedidos...</p>
@@ -68,16 +86,22 @@ export default function AdminPedidos() {
       {ordenes.map((orden) => (
         <div key={orden.id} className="rounded-lg border border-neutral-200 bg-white p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-mono text-xs text-neutral-400">{orden.id}</span>
+            <div>
+              <p className="text-sm font-semibold" title={orden.id}>
+                Pedido #{idCorto(orden.id)}
+              </p>
+              <p className="text-xs text-neutral-500">{formatoFecha.format(new Date(orden.created_at))}</p>
+            </div>
             <select
               value={orden.estado}
               disabled={guardandoId === orden.id}
-              onChange={(e) => cambiarEstado(orden.id, e.target.value as EstadoOrden)}
-              className="rounded-md border border-neutral-300 px-2 py-1 text-sm"
+              aria-label={`Estado del pedido ${idCorto(orden.id)}`}
+              onChange={(e) => cambiarEstado(orden, e.target.value as EstadoOrden)}
+              className={`rounded-full border-0 px-3 py-1 text-xs font-medium disabled:opacity-50 ${COLOR_ESTADO[orden.estado]}`}
             >
               {ESTADOS.map((estado) => (
                 <option key={estado} value={estado}>
-                  {estado}
+                  {ETIQUETA_ESTADO[estado]}
                 </option>
               ))}
             </select>
