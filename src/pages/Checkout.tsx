@@ -6,30 +6,21 @@ import { useToast } from '../context/ToastContext'
 import { supabase } from '../lib/supabaseClient'
 import { formatoCLP } from '../lib/format'
 import { REGIONES_CHILE } from '../lib/regiones'
-import type { OpcionEnvio } from '../types'
+import { COMUNAS_POR_REGION } from '../lib/comunas'
+import {
+  DIRECCION_VACIA,
+  TODAS_LAS_COMUNAS,
+  buscarComuna,
+  cargarDireccionesLocales,
+  claveDireccion,
+  guardarDireccionLocal,
+  olvidarDireccionLocal,
+  resumenDireccion,
+  unirDirecciones,
+  type DireccionForm,
+} from '../lib/direcciones'
+import type { DireccionEnvio, OpcionEnvio } from '../types'
 import Turnstile, { TURNSTILE_SITE_KEY } from '../components/Turnstile'
-
-interface DireccionForm {
-  nombre: string
-  telefono: string
-  email: string
-  region: string
-  comuna: string
-  calle: string
-  numero: string
-  depto: string
-}
-
-const DIRECCION_VACIA: DireccionForm = {
-  nombre: '',
-  telefono: '',
-  email: '',
-  region: '',
-  comuna: '',
-  calle: '',
-  numero: '',
-  depto: '',
-}
 
 export default function Checkout() {
   const { items, total: subtotal, updateCantidad, removeItem, restoreItem } = useCart()
@@ -48,6 +39,39 @@ export default function Checkout() {
   const formRef = useRef<HTMLFormElement>(null)
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const [captchaReset, setCaptchaReset] = useState(0)
+
+  // Precarga: direcciones usadas antes en este navegador y, con sesion
+  // iniciada, las de pedidos anteriores (RLS solo entrega las propias).
+  const [direccionesLocales, setDireccionesLocales] = useState<DireccionForm[]>(cargarDireccionesLocales)
+  const [direccionesPedidos, setDireccionesPedidos] = useState<DireccionForm[]>([])
+  const [recordarDireccion, setRecordarDireccion] = useState(true)
+  const usuarioId = session?.user?.id
+
+  useEffect(() => {
+    if (!usuarioId) return
+    let activo = true
+    supabase
+      .from('ordenes')
+      .select('direccion_envio')
+      .eq('usuario_id', usuarioId)
+      .order('created_at', { ascending: false })
+      .limit(10)
+      .then(({ data }) => {
+        if (!activo || !data) return
+        const lista = data
+          .map((o) => o.direccion_envio as Partial<DireccionEnvio> | null)
+          .filter((d): d is DireccionEnvio => Boolean(d?.calle && d?.numero && d?.comuna && d?.region))
+          .map((d) => ({ ...DIRECCION_VACIA, ...d, depto: d.depto ?? '' }))
+        setDireccionesPedidos(lista)
+      })
+    return () => {
+      activo = false
+    }
+  }, [usuarioId])
+
+  const direccionesGuardadas = unirDirecciones(direccionesLocales, usuarioId ? direccionesPedidos : [])
+  const clavesLocales = new Set(direccionesLocales.map(claveDireccion))
+  const claveActual = claveDireccion(direccion)
 
   useEffect(() => {
     if (session?.user?.email && !direccion.email) {
@@ -75,18 +99,71 @@ export default function Checkout() {
     }
   }, [redirect])
 
+  function invalidarCotizacion() {
+    setOpciones(null)
+    setOpcionElegida(null)
+  }
+
   function actualizarCampo<K extends keyof DireccionForm>(campo: K, valor: DireccionForm[K]) {
     setDireccion((d) => ({ ...d, [campo]: valor }))
     // si cambia region/comuna la cotizacion ya calculada queda obsoleta
-    if (campo === 'region' || campo === 'comuna') {
-      setOpciones(null)
-      setOpcionElegida(null)
+    if (campo === 'region' || campo === 'comuna') invalidarCotizacion()
+  }
+
+  function cambiarRegion(region: string) {
+    setDireccion((d) => {
+      // Si la comuna escrita no pertenece a la nueva region, se limpia.
+      const encontrada = buscarComuna(d.comuna)
+      return { ...d, region, comuna: encontrada?.region === region ? d.comuna : '' }
+    })
+    invalidarCotizacion()
+  }
+
+  function cambiarComuna(texto: string) {
+    const encontrada = buscarComuna(texto)
+    setDireccion((d) => ({
+      ...d,
+      comuna: texto,
+      // Al escribir la comuna primero, la region se completa sola.
+      region: encontrada && !d.region ? encontrada.region : d.region,
+    }))
+    setErrorEnvio(null)
+    invalidarCotizacion()
+  }
+
+  /** Al salir del campo, corrige mayusculas y tildes ("vina del mar" -> "Viña del Mar"). */
+  function normalizarComuna() {
+    const encontrada = buscarComuna(direccion.comuna)
+    if (encontrada && encontrada.comuna !== direccion.comuna) {
+      setDireccion((d) => ({ ...d, comuna: encontrada.comuna }))
     }
+  }
+
+  function usarDireccion(d: DireccionForm) {
+    setDireccion({ ...d, email: d.email || session?.user?.email || '' })
+    setErrorEnvio(null)
+    invalidarCotizacion()
+  }
+
+  function olvidarDireccion(d: DireccionForm) {
+    olvidarDireccionLocal(d)
+    setDireccionesLocales(cargarDireccionesLocales())
+    toast.info('Dirección eliminada de este dispositivo.')
   }
 
   async function calcularEnvio(e: FormEvent) {
     e.preventDefault()
     setErrorEnvio(null)
+
+    // La comuna se usa como destino del courier: debe ser una comuna real
+    // de la region elegida.
+    const comuna = buscarComuna(direccion.comuna)
+    if (!comuna || comuna.region !== direccion.region) {
+      setErrorEnvio(`Elige una comuna de la lista para la región ${direccion.region}.`)
+      return
+    }
+    if (comuna.comuna !== direccion.comuna) setDireccion((d) => ({ ...d, comuna: comuna.comuna }))
+
     setCalculandoEnvio(true)
     setOpciones(null)
     setOpcionElegida(null)
@@ -96,7 +173,7 @@ export default function Checkout() {
         body: {
           items: items.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad })),
           region: direccion.region,
-          comuna: direccion.comuna,
+          comuna: comuna.comuna,
         },
       })
 
@@ -138,6 +215,8 @@ export default function Checkout() {
 
       if (error) throw error
       if (!data?.url || !data?.token) throw new Error('Respuesta inválida de Webpay.')
+
+      if (recordarDireccion) guardarDireccionLocal(direccion)
 
       setRedirect({ url: data.url, token: data.token })
     } catch (err) {
@@ -248,6 +327,51 @@ export default function Checkout() {
       </div>
 
       <h2 className="mb-3 mt-8 text-lg font-bold">Datos de envío</h2>
+
+      {direccionesGuardadas.length > 0 && (
+        <div className="mb-4">
+          <p className="mb-2 text-sm font-medium text-neutral-700">Usar una dirección guardada</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {direccionesGuardadas.map((d) => {
+              const clave = claveDireccion(d)
+              const elegida = clave === claveActual
+              return (
+                <div
+                  key={clave}
+                  className={`flex items-start gap-2 rounded-lg border bg-white p-3 text-sm ${
+                    elegida ? 'border-neutral-900 ring-1 ring-neutral-900' : 'border-neutral-200'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => usarDireccion(d)}
+                    aria-pressed={elegida}
+                    className="flex-1 text-left"
+                  >
+                    <span className="block font-medium">{d.nombre}</span>
+                    <span className="block text-neutral-600">{resumenDireccion(d)}</span>
+                    <span className="block text-xs text-neutral-400">{d.region}</span>
+                    <span className="mt-1 block text-xs font-medium text-neutral-900 underline">
+                      {elegida ? 'Dirección seleccionada' : 'Usar esta dirección'}
+                    </span>
+                  </button>
+                  {clavesLocales.has(clave) && (
+                    <button
+                      type="button"
+                      onClick={() => olvidarDireccion(d)}
+                      aria-label={`Olvidar la dirección ${resumenDireccion(d)}`}
+                      title="Olvidar en este dispositivo"
+                      className="rounded px-1 text-neutral-400 hover:text-neutral-700"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
       <form
         onSubmit={calcularEnvio}
         className="grid grid-cols-1 gap-3 rounded-lg border border-neutral-200 bg-white p-4 sm:grid-cols-2"
@@ -286,7 +410,7 @@ export default function Checkout() {
           <select
             required
             value={direccion.region}
-            onChange={(e) => actualizarCampo('region', e.target.value)}
+            onChange={(e) => cambiarRegion(e.target.value)}
             className={CLASE_INPUT}
           >
             <option value="">Selecciona tu región</option>
@@ -300,11 +424,21 @@ export default function Checkout() {
         <Campo etiqueta="Comuna">
           <input
             required
+            list="lista-comunas"
             autoComplete="address-level2"
+            placeholder={direccion.region ? 'Escribe para buscar' : 'Escribe tu comuna'}
             value={direccion.comuna}
-            onChange={(e) => actualizarCampo('comuna', e.target.value)}
+            onChange={(e) => cambiarComuna(e.target.value)}
+            onBlur={normalizarComuna}
             className={CLASE_INPUT}
           />
+          <datalist id="lista-comunas">
+            {direccion.region
+              ? (COMUNAS_POR_REGION[direccion.region] ?? []).map((c) => <option key={c} value={c} />)
+              : TODAS_LAS_COMUNAS.map(({ comuna, region }) => (
+                  <option key={comuna} value={comuna} label={region} />
+                ))}
+          </datalist>
         </Campo>
         <Campo etiqueta="Calle">
           <input
@@ -348,9 +482,17 @@ export default function Checkout() {
         </button>
         {(!direccion.region || !direccion.comuna) && (
           <p className="-mt-1 text-xs text-neutral-500 sm:col-span-2">
-            Elige región y escribe tu comuna para cotizar el envío.
+            Elige tu región y busca tu comuna (o escribe la comuna y la región se completa sola).
           </p>
         )}
+        <label className="flex items-center gap-2 text-xs text-neutral-600 sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={recordarDireccion}
+            onChange={(e) => setRecordarDireccion(e.target.checked)}
+          />
+          Recordar esta dirección en este dispositivo para mis próximas compras
+        </label>
       </form>
 
       {opciones && (
