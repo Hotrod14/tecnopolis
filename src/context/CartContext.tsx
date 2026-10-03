@@ -31,12 +31,36 @@ interface CartContextValue {
 
 const CartContext = createContext<CartContextValue | undefined>(undefined)
 
+function esItemValido(i: unknown): i is CartItem {
+  if (!i || typeof i !== 'object') return false
+  const x = i as Record<string, unknown>
+  return (
+    typeof x.producto_id === 'string' &&
+    typeof x.nombre === 'string' &&
+    typeof x.precio === 'number' &&
+    typeof x.cantidad === 'number' &&
+    typeof x.stockDisponible === 'number'
+  )
+}
+
+// localStorage puede fallar (modo privado, cuota llena, almacenamiento
+// bloqueado) o traer datos corruptos: sin el, el carrito funciona igual
+// pero no sobrevive a una recarga.
 function loadCart(): CartItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as CartItem[]) : []
+    const data: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(data) ? data.filter(esItemValido) : []
   } catch {
     return []
+  }
+}
+
+function saveCart(items: CartItem[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
+  } catch {
+    // sin almacenamiento disponible: el carrito queda solo en memoria
   }
 }
 
@@ -44,7 +68,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>(() => loadCart())
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
+    saveCart(items)
   }, [items])
 
   function addItem(producto: Producto, cantidad = 1): ResultadoAgregar {
