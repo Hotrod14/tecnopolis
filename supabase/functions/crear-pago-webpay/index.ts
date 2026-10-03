@@ -67,7 +67,26 @@ function validarDireccion(d: Record<string, unknown> | undefined) {
   if (!REGIONES_CHILE.some((r) => r.nombre === direccion.region)) {
     throw new ErrorValidacion('Region invalida.')
   }
-  return direccion
+
+  // Datos del buscador de direcciones (opcionales). Es informacion que
+  // envia el navegador, sirve para orientar al despacho pero no es una
+  // garantia: por eso cualquier valor fuera de lo esperado se descarta.
+  const verificacion = VERIFICACIONES.includes(d.verificacion as string)
+    ? (d.verificacion as string)
+    : 'manual'
+  const lat = coordenada(d.lat, -56.1, -17.4)
+  const lon = coordenada(d.lon, -109.6, -66.3)
+  return {
+    ...direccion,
+    verificacion,
+    ...(verificacion !== 'manual' && lat !== null && lon !== null ? { lat, lon } : {}),
+  }
+}
+
+const VERIFICACIONES = ['completa', 'calle', 'manual']
+
+function coordenada(valor: unknown, min: number, max: number): number | null {
+  return typeof valor === 'number' && Number.isFinite(valor) && valor >= min && valor <= max ? valor : null
 }
 
 Deno.serve(async (req) => {

@@ -125,7 +125,9 @@ export default function AdminPedidos() {
             </div>
 
             <div>
-              <p className="font-medium text-neutral-700">Envío a</p>
+              <p className="flex flex-wrap items-center gap-2 font-medium text-neutral-700">
+                Envío a <EtiquetaVerificacion orden={orden} />
+              </p>
               <p className="text-neutral-500">
                 {orden.direccion_envio?.nombre} · {orden.direccion_envio?.telefono}
               </p>
@@ -137,10 +139,50 @@ export default function AdminPedidos() {
                 {orden.direccion_envio?.comuna}, {orden.direccion_envio?.region}
               </p>
               <p className="text-neutral-500">{orden.email_contacto}</p>
+              {orden.direccion_envio?.lat != null && orden.direccion_envio?.lon != null && (
+                <a
+                  href={`https://www.openstreetmap.org/?mlat=${orden.direccion_envio.lat}&mlon=${orden.direccion_envio.lon}#map=18/${orden.direccion_envio.lat}/${orden.direccion_envio.lon}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-medium underline"
+                >
+                  Ver en el mapa
+                </a>
+              )}
             </div>
           </div>
         </div>
       ))}
     </div>
+  )
+}
+
+const VERIFICACION: Record<string, { texto: string; clase: string; ayuda: string }> = {
+  completa: {
+    texto: 'Dirección verificada',
+    clase: 'bg-green-100 text-green-700',
+    ayuda: 'Calle y número elegidos desde el buscador de direcciones.',
+  },
+  calle: {
+    texto: 'Número sin verificar',
+    clase: 'bg-amber-100 text-amber-700',
+    ayuda: 'La calle viene del buscador; el número lo escribió el cliente.',
+  },
+  manual: {
+    texto: 'Dirección sin verificar',
+    clase: 'bg-red-100 text-red-700',
+    ayuda: 'El cliente no encontró su dirección en el buscador y la escribió a mano.',
+  },
+}
+
+function EtiquetaVerificacion({ orden }: { orden: Orden }) {
+  // Pedidos anteriores al buscador no traen este dato.
+  const v = orden.direccion_envio?.verificacion
+  if (!v || !VERIFICACION[v]) return null
+  const { texto, clase, ayuda } = VERIFICACION[v]
+  return (
+    <span title={ayuda} className={`rounded-full px-2 py-0.5 text-xs font-medium ${clase}`}>
+      {texto}
+    </span>
   )
 }

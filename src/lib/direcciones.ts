@@ -1,4 +1,5 @@
 import { COMUNAS_POR_REGION } from './comunas'
+import type { Verificacion } from './geocoder'
 
 export interface DireccionForm {
   nombre: string
@@ -9,6 +10,10 @@ export interface DireccionForm {
   calle: string
   numero: string
   depto: string
+  /** Como se obtuvo calle/numero (ver Verificacion). Sin valor: aun no hay direccion. */
+  verificacion?: Verificacion
+  lat?: number
+  lon?: number
 }
 
 export const DIRECCION_VACIA: DireccionForm = {

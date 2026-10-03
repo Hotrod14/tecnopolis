@@ -36,6 +36,9 @@ export interface DireccionEnvio {
   calle: string
   numero: string
   depto?: string
+  verificacion?: 'completa' | 'calle' | 'manual'
+  lat?: number
+  lon?: number
 }
 
 export interface Orden {
