@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabaseClient'
+import { traducirError } from '../../lib/errores'
+import { useToast } from '../../context/ToastContext'
 import Turnstile, { TURNSTILE_SITE_KEY } from '../../components/Turnstile'
 
 const SIN_PERMISOS = 'Esta cuenta no tiene permisos de administrador.'
@@ -67,6 +69,8 @@ export default function AdminLogin() {
         <input
           type="email"
           required
+          autoComplete="username"
+          aria-label="Correo"
           placeholder="Correo"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -75,6 +79,8 @@ export default function AdminLogin() {
         <input
           type="password"
           required
+          autoComplete="current-password"
+          aria-label="Contraseña"
           placeholder="Contraseña"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -107,6 +113,7 @@ function SegundoFactor({ onCancelar }: { onCancelar: () => Promise<void> }) {
   const [codigo, setCodigo] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [verificando, setVerificando] = useState(false)
+  const toast = useToast()
   // StrictMode ejecuta los efectos dos veces en desarrollo: evita enrolar
   // dos factores en paralelo.
   const iniciado = useRef(false)
@@ -118,7 +125,7 @@ function SegundoFactor({ onCancelar }: { onCancelar: () => Promise<void> }) {
     async function preparar() {
       const { data, error } = await supabase.auth.mfa.listFactors()
       if (error) {
-        setError(error.message)
+        setError(traducirError(error.message))
         return
       }
 
@@ -135,7 +142,7 @@ function SegundoFactor({ onCancelar }: { onCancelar: () => Promise<void> }) {
         if (f.factor_type === 'totp' && f.status !== 'verified') {
           const { error } = await supabase.auth.mfa.unenroll({ factorId: f.id })
           if (error) {
-            setError(error.message)
+            setError(traducirError(error.message))
             return
           }
         }
@@ -145,7 +152,7 @@ function SegundoFactor({ onCancelar }: { onCancelar: () => Promise<void> }) {
         factorType: 'totp',
       })
       if (errorEnroll) {
-        setError(errorEnroll.message)
+        setError(traducirError(errorEnroll.message))
         return
       }
       setEstado({
@@ -170,9 +177,15 @@ function SegundoFactor({ onCancelar }: { onCancelar: () => Promise<void> }) {
     })
     setVerificando(false)
     if (error) {
-      setError(error.message)
+      setError(traducirError(error.message))
       setCodigo('')
+      return
     }
+    toast.exito(
+      estado.paso === 'enrolar'
+        ? 'Verificación en dos pasos activada. Bienvenido al panel.'
+        : 'Sesión de administrador iniciada.',
+    )
   }
 
   return (
@@ -210,6 +223,7 @@ function SegundoFactor({ onCancelar }: { onCancelar: () => Promise<void> }) {
             pattern="[0-9]{6}"
             maxLength={6}
             required
+            aria-label="Código de 6 dígitos"
             placeholder="Código de 6 dígitos"
             value={codigo}
             onChange={(e) => setCodigo(e.target.value.replace(/\D/g, ''))}
@@ -228,7 +242,10 @@ function SegundoFactor({ onCancelar }: { onCancelar: () => Promise<void> }) {
       {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
       <button
-        onClick={() => onCancelar()}
+        onClick={async () => {
+          await onCancelar()
+          toast.info('Cerraste sesión.')
+        }}
         className="mt-4 text-sm font-medium underline"
       >
         Cancelar y cerrar sesión

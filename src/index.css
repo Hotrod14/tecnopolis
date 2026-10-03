@@ -1,1 +1,22 @@
 @import "tailwindcss";
+
+@keyframes snackbar-entrada {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.snackbar-entrada {
+  animation: snackbar-entrada 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snackbar-entrada {
+    animation: none;
+  }
+}

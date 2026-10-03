@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
 export default function NuevoProductoModal({
@@ -6,7 +6,7 @@ export default function NuevoProductoModal({
   onCreated,
 }: {
   onClose: () => void
-  onCreated: () => void
+  onCreated: (nombre: string) => void
 }) {
   const [nombre, setNombre] = useState('')
   const [descripcion, setDescripcion] = useState('')
@@ -20,6 +20,15 @@ export default function NuevoProductoModal({
   const [imagenUrl, setImagenUrl] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Escape cierra el modal (salvo mientras se guarda).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !guardando) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [guardando, onClose])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -54,7 +63,7 @@ export default function NuevoProductoModal({
 
       if (insertError) throw insertError
 
-      onCreated()
+      onCreated(nombre)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo crear el producto.')
@@ -64,18 +73,33 @@ export default function NuevoProductoModal({
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-bold">Nuevo producto</h2>
+    <div
+      className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !guardando) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="titulo-nuevo-producto"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6 shadow-xl"
+      >
+        <h2 id="titulo-nuevo-producto" className="mb-4 text-lg font-bold">
+          Nuevo producto
+        </h2>
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <input
             required
+            autoFocus
+            aria-label="Nombre"
             placeholder="Nombre"
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
             className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
           />
           <textarea
+            aria-label="Descripción"
             placeholder="Descripción"
             value={descripcion}
             onChange={(e) => setDescripcion(e.target.value)}
@@ -86,7 +110,8 @@ export default function NuevoProductoModal({
               required
               type="number"
               min={0}
-              placeholder="Precio (CLP)"
+              aria-label="Precio (CLP)"
+            placeholder="Precio (CLP)"
               value={precio}
               onChange={(e) => setPrecio(e.target.value)}
               className="w-1/2 rounded-md border border-neutral-300 px-3 py-2 text-sm"
@@ -95,13 +120,15 @@ export default function NuevoProductoModal({
               required
               type="number"
               min={0}
-              placeholder="Stock"
+              aria-label="Stock"
+            placeholder="Stock"
               value={stock}
               onChange={(e) => setStock(e.target.value)}
               className="w-1/2 rounded-md border border-neutral-300 px-3 py-2 text-sm"
             />
           </div>
           <input
+            aria-label="URL de imagen (opcional si subes un archivo)"
             placeholder="URL de imagen (opcional si subes un archivo)"
             value={imagenUrl}
             onChange={(e) => setImagenUrl(e.target.value)}
@@ -110,6 +137,7 @@ export default function NuevoProductoModal({
           <input
             type="file"
             accept="image/*"
+            aria-label="Subir imagen"
             onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
             className="text-sm"
           />
@@ -123,7 +151,8 @@ export default function NuevoProductoModal({
               type="number"
               min={0.1}
               step={0.1}
-              placeholder="Peso (kg)"
+              aria-label="Peso (kg)"
+            placeholder="Peso (kg)"
               value={pesoKg}
               onChange={(e) => setPesoKg(e.target.value)}
               className="w-1/4 rounded-md border border-neutral-300 px-2 py-2 text-sm"
@@ -132,7 +161,8 @@ export default function NuevoProductoModal({
               required
               type="number"
               min={1}
-              placeholder="Alto (cm)"
+              aria-label="Alto (cm)"
+            placeholder="Alto (cm)"
               value={altoCm}
               onChange={(e) => setAltoCm(e.target.value)}
               className="w-1/4 rounded-md border border-neutral-300 px-2 py-2 text-sm"
@@ -141,7 +171,8 @@ export default function NuevoProductoModal({
               required
               type="number"
               min={1}
-              placeholder="Ancho (cm)"
+              aria-label="Ancho (cm)"
+            placeholder="Ancho (cm)"
               value={anchoCm}
               onChange={(e) => setAnchoCm(e.target.value)}
               className="w-1/4 rounded-md border border-neutral-300 px-2 py-2 text-sm"
@@ -150,7 +181,8 @@ export default function NuevoProductoModal({
               required
               type="number"
               min={1}
-              placeholder="Largo (cm)"
+              aria-label="Largo (cm)"
+            placeholder="Largo (cm)"
               value={largoCm}
               onChange={(e) => setLargoCm(e.target.value)}
               className="w-1/4 rounded-md border border-neutral-300 px-2 py-2 text-sm"

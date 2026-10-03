@@ -1,15 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { useCart } from '../context/CartContext'
+import { MAX_POR_PRODUCTO, useCart } from '../context/CartContext'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 import { supabase } from '../lib/supabaseClient'
 import { formatoCLP } from '../lib/format'
 import { REGIONES_CHILE } from '../lib/regiones'
 import type { OpcionEnvio } from '../types'
 import Turnstile, { TURNSTILE_SITE_KEY } from '../components/Turnstile'
-
-// Debe coincidir con MAX_CANTIDAD en supabase/functions/_shared/validacion.ts
-const MAX_CANTIDAD_POR_PRODUCTO = 10
 
 interface DireccionForm {
   nombre: string
@@ -34,8 +32,9 @@ const DIRECCION_VACIA: DireccionForm = {
 }
 
 export default function Checkout() {
-  const { items, total: subtotal, updateCantidad, removeItem } = useCart()
+  const { items, total: subtotal, updateCantidad, removeItem, restoreItem } = useCart()
   const { session } = useAuth()
+  const toast = useToast()
 
   const [direccion, setDireccion] = useState<DireccionForm>(DIRECCION_VACIA)
   const [opciones, setOpciones] = useState<OpcionEnvio[] | null>(null)
@@ -56,6 +55,19 @@ export default function Checkout() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session])
+
+  // El costo de envio depende del peso del carrito: si cambian los
+  // productos o cantidades, la cotizacion anterior deja de ser valida
+  // (el servidor recalcula al pagar y el total mostrado no coincidiria).
+  const firmaCarrito = items.map((i) => `${i.producto_id}:${i.cantidad}`).join('|')
+  const [firmaCotizada, setFirmaCotizada] = useState(firmaCarrito)
+  if (firmaCotizada !== firmaCarrito) {
+    setFirmaCotizada(firmaCarrito)
+    if (opciones) {
+      setOpciones(null)
+      setOpcionElegida(null)
+    }
+  }
 
   useEffect(() => {
     if (redirect && formRef.current) {
@@ -93,11 +105,21 @@ export default function Checkout() {
 
       setOpciones(data.opciones)
       setOpcionElegida(data.opciones[0])
+      setFirmaCotizada(firmaCarrito)
     } catch (err) {
       setErrorEnvio(await mensajeDeError(err, 'No se pudo cotizar el envío.'))
     } finally {
       setCalculandoEnvio(false)
     }
+  }
+
+  function quitar(productoId: string) {
+    const item = items.find((i) => i.producto_id === productoId)
+    if (!item) return
+    removeItem(productoId)
+    toast.info(`Quitaste ${item.nombre} del carrito.`, {
+      accion: { label: 'Deshacer', onClick: () => restoreItem(item) },
+    })
   }
 
   async function pagarConWebpay() {
@@ -129,7 +151,9 @@ export default function Checkout() {
   if (redirect) {
     return (
       <div className="mx-auto max-w-md px-4 py-16 text-center">
+        <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-900" />
         <p className="text-neutral-600">Redirigiendo a Webpay Plus...</p>
+        <p className="mt-1 text-xs text-neutral-400">No cierres ni recargues esta página.</p>
         <form ref={formRef} method="POST" action={redirect.url} className="hidden">
           <input type="hidden" name="token_ws" value={redirect.token} />
         </form>
@@ -140,9 +164,13 @@ export default function Checkout() {
   if (items.length === 0) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 text-center">
-        <p className="text-neutral-500">Tu carrito está vacío.</p>
-        <Link to="/" className="mt-4 inline-block text-sm font-medium underline">
-          Volver a la tienda
+        <p className="text-lg font-medium">Tu carrito está vacío</p>
+        <p className="mt-1 text-sm text-neutral-500">Agrega productos desde el catálogo para comprar.</p>
+        <Link
+          to="/"
+          className="mt-6 inline-block rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+        >
+          Ir a la tienda
         </Link>
       </div>
     )
@@ -151,117 +179,178 @@ export default function Checkout() {
   const total = subtotal + (opcionElegida?.tarifa ?? 0)
   const direccionCompleta =
     direccion.nombre && direccion.telefono && direccion.email && direccion.calle && direccion.numero
+  const faltaCaptcha = Boolean(TURNSTILE_SITE_KEY) && !captchaToken
+  const motivoBloqueo = !opcionElegida
+    ? 'Completa tus datos y calcula el envío para continuar.'
+    : !direccionCompleta
+      ? 'Completa nombre, teléfono, correo, calle y número para pagar.'
+      : faltaCaptcha
+        ? 'Esperando la verificación de seguridad...'
+        : null
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
       <h1 className="mb-6 text-2xl font-bold">Resumen de tu compra</h1>
 
       <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 bg-white">
-        {items.map((item) => (
-          <div key={item.producto_id} className="flex items-center gap-4 p-4">
-            {item.imagen_url && (
-              <img src={item.imagen_url} alt={item.nombre} className="h-14 w-14 object-contain" />
-            )}
-            <div className="flex-1">
-              <p className="text-sm font-medium">{item.nombre}</p>
-              <p className="text-xs text-neutral-500">{formatoCLP.format(item.precio)} c/u</p>
+        {items.map((item) => {
+          const maximo = Math.min(item.stockDisponible, MAX_POR_PRODUCTO)
+          return (
+            <div key={item.producto_id} className="flex gap-3 p-4">
+              {item.imagen_url && (
+                <img src={item.imagen_url} alt="" className="h-16 w-16 shrink-0 object-contain" />
+              )}
+              <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{item.nombre}</p>
+                  <p className="text-xs text-neutral-500">{formatoCLP.format(item.precio)} c/u</p>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center rounded-md border border-neutral-300">
+                    <button
+                      type="button"
+                      onClick={() => updateCantidad(item.producto_id, item.cantidad - 1)}
+                      disabled={item.cantidad <= 1}
+                      aria-label={`Quitar una unidad de ${item.nombre}`}
+                      className="h-8 w-8 text-neutral-600 hover:bg-neutral-100 disabled:text-neutral-300"
+                    >
+                      −
+                    </button>
+                    <span className="w-8 text-center text-sm" aria-live="polite">
+                      {item.cantidad}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updateCantidad(item.producto_id, item.cantidad + 1)}
+                      disabled={item.cantidad >= maximo}
+                      aria-label={`Agregar una unidad de ${item.nombre}`}
+                      title={item.cantidad >= maximo ? 'Alcanzaste el máximo disponible' : undefined}
+                      className="h-8 w-8 text-neutral-600 hover:bg-neutral-100 disabled:text-neutral-300"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <span className="w-24 text-right text-sm font-medium">
+                    {formatoCLP.format(item.precio * item.cantidad)}
+                  </span>
+                  <button
+                    onClick={() => quitar(item.producto_id)}
+                    aria-label={`Quitar ${item.nombre} del carrito`}
+                    className="text-xs text-red-500 hover:underline"
+                  >
+                    Quitar
+                  </button>
+                </div>
+              </div>
             </div>
-            <input
-              type="number"
-              min={1}
-              max={Math.min(item.stockDisponible, MAX_CANTIDAD_POR_PRODUCTO)}
-              value={item.cantidad}
-              onChange={(e) => updateCantidad(item.producto_id, Number(e.target.value))}
-              className="w-16 rounded-md border border-neutral-300 px-2 py-1 text-center text-sm"
-            />
-            <span className="w-24 text-right text-sm font-medium">
-              {formatoCLP.format(item.precio * item.cantidad)}
-            </span>
-            <button
-              onClick={() => removeItem(item.producto_id)}
-              className="text-xs text-red-500 hover:underline"
-            >
-              Quitar
-            </button>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       <h2 className="mb-3 mt-8 text-lg font-bold">Datos de envío</h2>
-      <form onSubmit={calcularEnvio} className="grid grid-cols-2 gap-3 rounded-lg border border-neutral-200 bg-white p-4">
-        <input
-          required
-          placeholder="Nombre completo"
-          value={direccion.nombre}
-          onChange={(e) => actualizarCampo('nombre', e.target.value)}
-          className="col-span-2 rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        />
-        <input
-          required
-          type="tel"
-          placeholder="Teléfono"
-          value={direccion.telefono}
-          onChange={(e) => actualizarCampo('telefono', e.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        />
-        <input
-          required
-          type="email"
-          placeholder="Correo"
-          value={direccion.email}
-          onChange={(e) => actualizarCampo('email', e.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        />
-        <select
-          required
-          value={direccion.region}
-          onChange={(e) => actualizarCampo('region', e.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        >
-          <option value="">Región</option>
-          {REGIONES_CHILE.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        <input
-          required
-          placeholder="Comuna"
-          value={direccion.comuna}
-          onChange={(e) => actualizarCampo('comuna', e.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        />
-        <input
-          required
-          placeholder="Calle"
-          value={direccion.calle}
-          onChange={(e) => actualizarCampo('calle', e.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        />
-        <input
-          required
-          placeholder="Número"
-          value={direccion.numero}
-          onChange={(e) => actualizarCampo('numero', e.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        />
-        <input
-          placeholder="Depto / oficina (opcional)"
-          value={direccion.depto}
-          onChange={(e) => actualizarCampo('depto', e.target.value)}
-          className="col-span-2 rounded-md border border-neutral-300 px-3 py-2 text-sm"
-        />
+      <form
+        onSubmit={calcularEnvio}
+        className="grid grid-cols-1 gap-3 rounded-lg border border-neutral-200 bg-white p-4 sm:grid-cols-2"
+      >
+        <Campo etiqueta="Nombre completo" className="sm:col-span-2">
+          <input
+            required
+            autoComplete="name"
+            value={direccion.nombre}
+            onChange={(e) => actualizarCampo('nombre', e.target.value)}
+            className={CLASE_INPUT}
+          />
+        </Campo>
+        <Campo etiqueta="Teléfono">
+          <input
+            required
+            type="tel"
+            autoComplete="tel"
+            placeholder="+56 9 1234 5678"
+            value={direccion.telefono}
+            onChange={(e) => actualizarCampo('telefono', e.target.value)}
+            className={CLASE_INPUT}
+          />
+        </Campo>
+        <Campo etiqueta="Correo">
+          <input
+            required
+            type="email"
+            autoComplete="email"
+            value={direccion.email}
+            onChange={(e) => actualizarCampo('email', e.target.value)}
+            className={CLASE_INPUT}
+          />
+        </Campo>
+        <Campo etiqueta="Región">
+          <select
+            required
+            value={direccion.region}
+            onChange={(e) => actualizarCampo('region', e.target.value)}
+            className={CLASE_INPUT}
+          >
+            <option value="">Selecciona tu región</option>
+            {REGIONES_CHILE.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        </Campo>
+        <Campo etiqueta="Comuna">
+          <input
+            required
+            autoComplete="address-level2"
+            value={direccion.comuna}
+            onChange={(e) => actualizarCampo('comuna', e.target.value)}
+            className={CLASE_INPUT}
+          />
+        </Campo>
+        <Campo etiqueta="Calle">
+          <input
+            required
+            autoComplete="address-line1"
+            value={direccion.calle}
+            onChange={(e) => actualizarCampo('calle', e.target.value)}
+            className={CLASE_INPUT}
+          />
+        </Campo>
+        <Campo etiqueta="Número">
+          <input
+            required
+            inputMode="numeric"
+            value={direccion.numero}
+            onChange={(e) => actualizarCampo('numero', e.target.value)}
+            className={CLASE_INPUT}
+          />
+        </Campo>
+        <Campo etiqueta="Depto / oficina (opcional)" className="sm:col-span-2">
+          <input
+            autoComplete="address-line2"
+            value={direccion.depto}
+            onChange={(e) => actualizarCampo('depto', e.target.value)}
+            className={CLASE_INPUT}
+          />
+        </Campo>
 
-        {errorEnvio && <p className="col-span-2 text-sm text-red-500">{errorEnvio}</p>}
+        {errorEnvio && (
+          <p role="alert" className="text-sm text-red-500 sm:col-span-2">
+            {errorEnvio}
+          </p>
+        )}
 
         <button
           type="submit"
           disabled={!direccion.region || !direccion.comuna || calculandoEnvio}
-          className="col-span-2 mt-1 rounded-md border border-neutral-900 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:border-neutral-300 disabled:text-neutral-400"
+          className="mt-1 rounded-md border border-neutral-900 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:border-neutral-300 disabled:text-neutral-400 sm:col-span-2"
         >
-          {calculandoEnvio ? 'Calculando...' : 'Calcular envío'}
+          {calculandoEnvio ? 'Calculando...' : opciones ? 'Recalcular envío' : 'Calcular envío'}
         </button>
+        {(!direccion.region || !direccion.comuna) && (
+          <p className="-mt-1 text-xs text-neutral-500 sm:col-span-2">
+            Elige región y escribe tu comuna para cotizar el envío.
+          </p>
+        )}
       </form>
 
       {opciones && (
@@ -313,24 +402,45 @@ export default function Checkout() {
         <span>{formatoCLP.format(total)}</span>
       </div>
 
-      {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-4 text-sm text-red-500">
+          {error}
+        </p>
+      )}
 
       <Turnstile onToken={setCaptchaToken} resetKey={captchaReset} />
 
       <button
         onClick={pagarConWebpay}
-        disabled={
-          loading || !opcionElegida || !direccionCompleta || (Boolean(TURNSTILE_SITE_KEY) && !captchaToken)
-        }
+        disabled={loading || Boolean(motivoBloqueo)}
         className="mt-6 w-full rounded-md bg-neutral-900 py-3 text-sm font-semibold text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-400"
       >
-        {loading
-          ? 'Conectando con Webpay...'
-          : !opcionElegida
-            ? 'Calcula el envío para continuar'
-            : 'Pagar con Webpay Plus'}
+        {loading ? 'Conectando con Webpay...' : `Pagar ${formatoCLP.format(total)} con Webpay Plus`}
       </button>
+      {motivoBloqueo && !loading && (
+        <p className="mt-2 text-center text-xs text-neutral-500">{motivoBloqueo}</p>
+      )}
     </div>
+  )
+}
+
+const CLASE_INPUT =
+  'w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-neutral-900 focus:outline-none focus:ring-1 focus:ring-neutral-900'
+
+function Campo({
+  etiqueta,
+  className = '',
+  children,
+}: {
+  etiqueta: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <label className={`flex flex-col gap-1 ${className}`}>
+      <span className="text-xs font-medium text-neutral-600">{etiqueta}</span>
+      {children}
+    </label>
   )
 }
 

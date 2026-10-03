@@ -7,6 +7,7 @@ import {
 } from 'react'
 import type { AuthenticatorAssuranceLevels, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabaseClient'
+import { traducirError } from '../lib/errores'
 
 interface AuthContextValue {
   session: Session | null
@@ -82,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: captchaToken ? { captchaToken } : undefined,
     })
-    if (error) return { error: error.message }
+    if (error) return { error: traducirError(error.message) }
     return { error: null }
   }
 
@@ -92,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: captchaToken ? { captchaToken } : undefined,
     })
-    if (error) return { error: error.message }
+    if (error) return { error: traducirError(error.message) }
     return { error: null }
   }
 
